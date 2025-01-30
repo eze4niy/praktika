@@ -1,104 +1,84 @@
-import asyncio
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import Message, ContentType
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.filters import Command
-from aiogram.enums import ParseMode
+import telebot
 import pandas as pd
 import os
 
-API_TOKEN = '7126313019:AAG0Y7FYj9ftjs6s4TSbb0VxvbESEAqj59c'
+TOKEN = '7126313019:AAG0Y7FYj9ftjs6s4TSbb0VxvbESEAqj59c'
+bot = telebot.TeleBot(TOKEN)
 
-bot = Bot(token=API_TOKEN)
-storage = MemoryStorage()
-dp = Dispatcher(storage=storage)
+FOLDER = "files"
+if not os.path.exists(FOLDER):
+    os.makedirs(FOLDER)
 
-UPLOAD_DIR = "uploads"
-if not os.path.exists(UPLOAD_DIR):
-    os.makedirs(UPLOAD_DIR)
+@bot.message_handler(commands=['start'])
+def start(msg):
+    bot.send_message(msg.chat.id, "Отправь Excel файл.")
 
-async def start_command(message: Message):
-
-    await message.answer("Отправьте Excel файл.")
-
-async def handle_file(message: Message):
-    document = message.document
-
-    if not document.file_name.endswith('.xlsx'):
-        await message.answer("Пожалуйста отправьте файл в формате Excel (.xlsx).")
+@bot.message_handler(content_types=['document'])
+def file_handler(msg):
+    doc = msg.document
+    if not doc.file_name.endswith('.xlsx'):
+        bot.send_message(msg.chat.id, "Ошибка, нужен файл .xlsx")
         return
 
-    file_path = os.path.join(UPLOAD_DIR, document.file_name)
+    path = os.path.join(FOLDER, doc.file_name)
+    file_info = bot.get_file(doc.file_id)
+    file_bytes = bot.download_file(file_info.file_path)
+
+    with open(path, 'wb') as f:
+        f.write(file_bytes)
 
     try:
-        with open(file_path, 'wb') as f:
-            file = await bot.download(document.file_id, destination=f)
+        df = pd.read_excel(path, sheet_name='Worksheet')
 
         try:
-            data = pd.read_excel(file_path, sheet_name='Worksheet')
+            month = df.iloc[1:, [1, 5, 4]]
+            month.columns = ['Преподаватель', 'Сделано', 'Всего']
+            month = month.dropna()
+            month['Сделано'] = pd.to_numeric(month['Сделано'], errors='coerce')
+            month['Всего'] = pd.to_numeric(month['Всего'], errors='coerce')
+            month['Процент'] = (month['Сделано'] / month['Всего']) * 100
+            low_month = month[month['Процент'] < 75]
+        except:
+            low_month = pd.DataFrame()
 
-            try:
-                month_data = data.iloc[1:, [1, 5, 4]]
-                month_data = month_data.rename(columns={month_data.columns[0]: 'ФИО преподавателя', month_data.columns[1]: 'Проверено', month_data.columns[2]: 'Получено'})
+        try:
+            week = df.iloc[1:, [1, 10, 9]]
+            week.columns = ['Преподаватель', 'Сделано', 'Всего']
+            week = week.dropna()
+            week['Сделано'] = pd.to_numeric(week['Сделано'], errors='coerce')
+            week['Всего'] = pd.to_numeric(week['Всего'], errors='coerce')
+            week['Процент'] = (week['Сделано'] / week['Всего']) * 100
+            low_week = week[week['Процент'] < 75]
+        except:
+            low_week = pd.DataFrame()
 
-                month_data = month_data.dropna()
-                month_data['Проверено'] = pd.to_numeric(month_data['Проверено'], errors='coerce')
-                month_data['Получено'] = pd.to_numeric(month_data['Получено'], errors='coerce')
-                month_data['% проверки'] = (month_data['Проверено'] / month_data['Получено']) * 100
+        text = ""
+        if low_month.empty:
+            text += "За месяц все хорошо.\n\n"
+        else:
+            text += "Проблемы за месяц:\n"
+            for i in range(len(low_month)):
+                row = low_month.iloc[i]
+                text += f"\n- {row['Преподаватель']}: {row['Процент']:.2f}% ({int(row['Сделано'])} из {int(row['Всего'])})"
+            text += "\n\n"
 
-                low_check_month = month_data[month_data['% проверки'] < 75]
-            except Exception as e:
-                low_check_month = pd.DataFrame()
+        if low_week.empty:
+            text += "За неделю все хорошо."
+        else:
+            text += "Проблемы за неделю:\n"
+            for i in range(len(low_week)):
+                row = low_week.iloc[i]
+                text += f"\n- {row['Преподаватель']}: {row['Процент']:.2f}% ({int(row['Сделано'])} из {int(row['Всего'])})"
 
-            try:
-                week_data = data.iloc[1:, [1, 10, 9]]  # Столбцы для анализа
-                week_data = week_data.rename(columns={week_data.columns[0]: 'ФИО преподавателя', week_data.columns[1]: 'Проверено', week_data.columns[2]: 'Получено'})
+        bot.send_message(msg.chat.id, text)
 
-                week_data = week_data.dropna()
-                week_data['Проверено'] = pd.to_numeric(week_data['Проверено'], errors='coerce')
-                week_data['Получено'] = pd.to_numeric(week_data['Получено'], errors='coerce')
-                week_data['% проверки'] = (week_data['Проверено'] / week_data['Получено']) * 100
-
-                low_check_week = week_data[week_data['% проверки'] < 75]
-            except Exception as e:
-                low_check_week = pd.DataFrame()
-
-            response = ""
-
-            if low_check_month.empty:
-                response += "Все преподаватели проверили более 75% домашних заданий за месяц.\n\n"
-            else:
-                response += "Преподаватели с низким процентом проверки домашних заданий за месяц:\n"
-                for i in range(len(low_check_month)):
-                    response += f"\n- <b>{low_check_month.iloc[i]['ФИО преподавателя']}</b>: {low_check_month.iloc[i]['% проверки']:.2f}% ({int(low_check_month.iloc[i]['Проверено'])} из {int(low_check_month.iloc[i]['Получено'])})"
-                response += "\n\n"
-
-            if low_check_week.empty:
-                response += "Все преподаватели проверили более 75% домашних заданий за неделю."
-            else:
-                response += "Преподаватели с низким процентом проверки за неделю:\n"
-                for i in range(len(low_check_week)):
-                    response += f"\n- <b>{low_check_week.iloc[i]['ФИО преподавателя']}</b>: {low_check_week.iloc[i]['% проверки']:.2f}% ({int(low_check_week.iloc[i]['Проверено'])} из {int(low_check_week.iloc[i]['Получено'])})"
-
-            await message.answer(response, parse_mode=ParseMode.HTML)
-
-        except Exception as e:
-            await message.answer(f"Произошла ошибка при обработке файла: {e}")
+    except Exception as e:
+        bot.send_message(msg.chat.id, f"Ошибка: {e}")
 
     finally:
+        try:
+            os.remove(path)
+        except Exception as e:
+            print(f"Файл не удален: {e}")
 
-        pass
-
-async def main():
-    dp.message.register(start_command, Command(commands=["start"]))
-    dp.message.register(handle_file, lambda message: message.content_type == ContentType.DOCUMENT)
-
-    dp.startup.register(startup_handler)
-    await dp.start_polling(bot)
-
-async def startup_handler():
-    print("Бот успешно запущен.")
-
-if __name__ == '__main__':
-    asyncio.run(main())
-
+bot.polling(none_stop=True)

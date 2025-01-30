@@ -26,7 +26,7 @@ def check_file(file):
 def welcome(msg):
     bot.send_message(
         msg.chat.id,
-        "/start - начало работы\n/save - сохранить файл\nОтправь Excel файл и если понадобится укажите строку и новую тему в формате: строка: Урок № Тема."
+        "/start - начало работы\n/save - сохранить файл\nОтправьте Excel файл и если понадобится укажите строку и новую тему в формате: строка: Урок № Тема."
     )
 
 @bot.message_handler(content_types=['document'])
